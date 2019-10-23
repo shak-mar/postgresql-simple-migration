@@ -52,10 +52,10 @@ import           Data.Traversable                   (Traversable)
 #if __GLASGOW_HASKELL__ < 710
 import           Data.Monoid                        (Monoid (..))
 #endif
-import           Data.Time                          (UTCTime)
 import           Database.PostgreSQL.Simple         (Connection, Only (..),
                                                      execute, execute_, query,
                                                      query_)
+import           Database.PostgreSQL.Simple.FromField (FromField (..))
 import           Database.PostgreSQL.Simple.FromRow (FromRow (..), field)
 import           Database.PostgreSQL.Simple.ToField (ToField (..))
 import           Database.PostgreSQL.Simple.ToRow   (ToRow (..))
@@ -313,7 +313,7 @@ data MigrationContext = MigrationContext
     }
 
 -- | Produces a list of all executed 'SchemaMigration's.
-getMigrations :: Connection -> IO [SchemaMigration]
+getMigrations :: FromField t => Connection -> IO [SchemaMigration t]
 getMigrations = flip query_ q
     where q = mconcat
             [ "select filename, checksum, executed_at "
@@ -321,23 +321,23 @@ getMigrations = flip query_ q
             ]
 
 -- | A product type representing a single, executed 'SchemaMigration'.
-data SchemaMigration = SchemaMigration
+data SchemaMigration t = SchemaMigration
     { schemaMigrationName       :: BS.ByteString
     -- ^ The name of the executed migration.
     , schemaMigrationChecksum   :: Checksum
     -- ^ The calculated MD5 checksum of the executed script.
-    , schemaMigrationExecutedAt :: UTCTime
+    , schemaMigrationExecutedAt :: t
     -- ^ A timestamp with timezone of the date of execution of the script.
     } deriving (Show, Eq, Read)
 
-instance Ord SchemaMigration where
+instance Eq t => Ord (SchemaMigration t) where
     compare (SchemaMigration nameLeft _ _) (SchemaMigration nameRight _ _) =
         compare nameLeft nameRight
 
-instance FromRow SchemaMigration where
+instance FromField t => FromRow (SchemaMigration t) where
     fromRow = SchemaMigration <$>
         field <*> field <*> field
 
-instance ToRow SchemaMigration where
+instance ToField t => ToRow (SchemaMigration t) where
     toRow (SchemaMigration name checksum executedAt) =
        [toField name, toField checksum, toField executedAt]
