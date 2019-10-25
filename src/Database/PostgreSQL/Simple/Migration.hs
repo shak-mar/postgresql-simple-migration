@@ -11,12 +11,15 @@
 --
 -- For usage, see Readme.markdown.
 
-{-# LANGUAGE CPP               #-}
-{-# LANGUAGE DeriveFoldable    #-}
-{-# LANGUAGE DeriveFunctor     #-}
-{-# LANGUAGE DeriveTraversable #-}
-{-# LANGUAGE LambdaCase        #-}
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE CPP                 #-}
+{-# LANGUAGE DeriveFoldable      #-}
+{-# LANGUAGE DeriveFunctor       #-}
+{-# LANGUAGE DeriveTraversable   #-}
+{-# LANGUAGE FlexibleInstances   #-}
+{-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE MonoLocalBinds      #-}
+{-# LANGUAGE OverloadedStrings   #-}
 
 module Database.PostgreSQL.Simple.Migration
     (
@@ -34,6 +37,7 @@ module Database.PostgreSQL.Simple.Migration
 
     -- * Migration result actions
     , getMigrations
+    , MigrationTime
 
     -- * Migration result types
     , SchemaMigration(..)
@@ -52,11 +56,14 @@ import           Data.Traversable                   (Traversable)
 #if __GLASGOW_HASKELL__ < 710
 import           Data.Monoid                        (Monoid (..))
 #endif
+import           Data.Time                          (LocalTime, UTCTime)
 import           Database.PostgreSQL.Simple         (Connection, Only (..),
                                                      execute, execute_, query,
                                                      query_)
-import           Database.PostgreSQL.Simple.FromField (FromField (..))
-import           Database.PostgreSQL.Simple.FromRow (FromRow (..), field)
+import           Database.PostgreSQL.Simple.FromField (FieldParser,
+                                                     FromField (..))
+import           Database.PostgreSQL.Simple.FromRow (FromRow (..), field,
+                                                     fieldWith)
 import           Database.PostgreSQL.Simple.ToField (ToField (..))
 import           Database.PostgreSQL.Simple.ToRow   (ToRow (..))
 import           Database.PostgreSQL.Simple.Types   (Query (..))
@@ -313,12 +320,24 @@ data MigrationContext = MigrationContext
     }
 
 -- | Produces a list of all executed 'SchemaMigration's.
-getMigrations :: FromField t => Connection -> IO [SchemaMigration t]
+getMigrations :: MigrationTime t => Connection -> IO [SchemaMigration t]
 getMigrations = flip query_ q
     where q = mconcat
             [ "select filename, checksum, executed_at "
             , "from schema_migrations order by executed_at asc"
             ]
+
+class MigrationTime t where
+    fieldParser :: FieldParser t
+
+instance {-# OVERLAPPABLE #-} MigrationTime t where
+    fieldParser _ _ = return undefined
+
+instance {-# INCOHERENT #-} MigrationTime UTCTime where
+    fieldParser = fromField
+
+instance {-# INCOHERENT #-} MigrationTime LocalTime where
+    fieldParser = fromField
 
 -- | A product type representing a single, executed 'SchemaMigration'.
 data SchemaMigration t = SchemaMigration
@@ -334,9 +353,9 @@ instance Eq t => Ord (SchemaMigration t) where
     compare (SchemaMigration nameLeft _ _) (SchemaMigration nameRight _ _) =
         compare nameLeft nameRight
 
-instance FromField t => FromRow (SchemaMigration t) where
+instance MigrationTime t => FromRow (SchemaMigration t) where
     fromRow = SchemaMigration <$>
-        field <*> field <*> field
+        field <*> field <*> fieldWith fieldParser
 
 instance ToField t => ToRow (SchemaMigration t) where
     toRow (SchemaMigration name checksum executedAt) =
